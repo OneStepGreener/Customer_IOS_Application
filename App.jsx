@@ -7,10 +7,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { NewAppScreen } from '@react-native/new-app-screen';
-import { StyleSheet, useColorScheme, View, Platform } from 'react-native';
+import { StyleSheet, useColorScheme, View } from 'react-native';
 import CustomStatusBar from './src/components/CustomStatusBar';
 import SplashScreen from './src/screens/Splash';
 import OnboardingScreen from './src/screens/Onboarding';
+import SessionService from './src/services/SessionService';
 
 import SignupScreen from './src/screens/Signup';
 import LoginScreen from './src/screens/Login';
@@ -24,14 +25,6 @@ import PickupHistoryScreen from './src/screens/PickupHistory';
 import GiftScreen from './src/screens/Gift';
 import CartScreen from './src/screens/Cart';
 import HelpScreen from './src/screens/Help';
-import PushNotificationService from './src/services/PushNotificationService';
-import SessionService from './src/services/SessionService';
-import { fetchWithTimeout } from './src/utils/apiHelper';
-
-// API Base URL for logout
-const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:5000'
-  : 'https://your-production-url.com';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -50,7 +43,6 @@ function App() {
   const [showCart, setShowCart] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [loginMobileNumber, setLoginMobileNumber] = useState('');
-  const [isCheckingSession, setIsCheckingSession] = useState(true);
   
   // Profile data state
   const [profileData, setProfileData] = useState({
@@ -65,117 +57,29 @@ function App() {
     }
   });
 
-  // Check for existing session on app startup
-  useEffect(() => {
-    const checkSession = async () => {
-      try {
-        console.log('🔍 Checking for existing session...');
-        
-        // Check session expiration info first
-        const expirationInfo = await SessionService.getSessionExpirationInfo();
-        if (expirationInfo) {
-          console.log('📅 Session expiration info:', {
-            daysRemaining: expirationInfo.daysRemaining,
-            isExpired: expirationInfo.isExpired,
-            expiresAt: expirationInfo.expiresAt,
-          });
-        }
-        
-        const session = await SessionService.getSession();
-        
-        if (session) {
-          // Check if session is expired (1 month limit)
-          const expiresAt = new Date(session.expiresAt);
-          const now = new Date();
-          
-          if (now > expiresAt) {
-            console.log('⏰ Session expired (1 month limit reached), auto-logging out...');
-            await SessionService.clearSession();
-            
-            // Reset profile data
-            setProfileData({
-              username: 'John Smith',
-              mobilePhone: '+44 555 5555 55',
-              address: 'hno 2-250,',
-              profileImage: null,
-              stats: {
-                pickups: 156,
-                wasteRecycled: '2.5T',
-                efficiency: '85%'
-              }
-            });
-            
-            // Navigate to login screen
-            setShowSplash(false);
-            setShowLogin(true);
-            setShowDashboard(false);
-            setIsCheckingSession(false);
-            return;
-          }
-          
-          // Calculate days remaining
-          const daysRemaining = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-          console.log('✅ Active session found, restoring user state...');
-          console.log(`   Days remaining: ${daysRemaining} days`);
-          
-          // Restore profile data from session
-          setProfileData({
-            username: session.customerName || 'John Smith',
-            customerName: session.customerName || 'John Smith',
-            customerId: session.customerId,
-            email: session.email || '',
-            mobilePhone: session.mobileNumber ? `+91${session.mobileNumber}` : '+44 555 5555 55',
-            address: session.address || 'hno 2-250,',
-            city: session.city || '',
-            state: session.state || '',
-            userType: session.userType || '',
-            status: session.status || '',
-            profileImage: null,
-            stats: {
-              pickups: 156,
-              wasteRecycled: '2.5T',
-              efficiency: '85%'
-            }
-          });
-          
-          // Navigate directly to dashboard (skip login/splash)
-          setShowSplash(false);
-          setShowLogin(false);
-          setShowOTP(false);
-          setShowDashboard(true);
-          
-          // Initialize push notifications
-          if (session.customerId) {
-            PushNotificationService.initialize(session.customerId, Platform.OS);
-          }
-        } else {
-          console.log('📭 No active session found or session expired');
-          // Continue with normal flow (splash -> onboarding -> login)
-        }
-      } catch (error) {
-        console.error('❌ Error checking session:', error);
-      } finally {
-        setIsCheckingSession(false);
+  const handleSplashComplete = async () => {
+    // Check for session when splash completes
+    const session = await SessionService.getSession();
+    const savedProfileData = await SessionService.getProfileData();
+    
+    if (session && session.customerId) {
+      console.log('✅ Found saved session, restoring...');
+      
+      // Restore profile data
+      if (savedProfileData) {
+        setProfileData(savedProfileData);
       }
-    };
-
-    checkSession();
-  }, []);
-
-  const handleSplashComplete = () => {
-    // Only proceed if session check is complete
-    if (!isCheckingSession) {
+      
+      // Navigate directly to dashboard
+      setShowSplash(false);
+      setShowLogin(false);
+      setShowOTP(false);
+      setShowDashboard(true);
+    } else {
+      // Normal flow - show onboarding/login
       setShowSplash(false);
     }
   };
-  
-  // Skip splash if session check completes and user is logged in
-  useEffect(() => {
-    if (!isCheckingSession && profileData?.customerId) {
-      // User has session, splash will be skipped by session check
-      setShowSplash(false);
-    }
-  }, [isCheckingSession, profileData?.customerId]);
 
   const handleOnboardingSkip = () => {
     setShowSignup(true); // Go to signup screen
@@ -219,14 +123,9 @@ function App() {
     // Add your login logic here
   };
 
-  const handleNavigateToSignup = (mobileNumber = '') => {
-    setShowOTP(false);
+  const handleNavigateToSignup = () => {
     setShowLogin(false);
     setShowSignup(true);
-    // Optionally pre-fill mobile number in signup if provided
-    if (mobileNumber) {
-      setLoginMobileNumber(mobileNumber);
-    }
   };
 
   const handleOTPBack = () => {
@@ -239,8 +138,20 @@ function App() {
     console.log('OTP Accepted', customerData);
     
     // Update profileData with customer information from API
-    if (customerData && customerData.customerId) {
-      const updatedProfileData = {
+    let updatedProfileData = {
+      username: 'John Smith',
+      mobilePhone: '+44 555 5555 55',
+      address: 'hno 2-250,',
+      profileImage: null,
+      stats: {
+        pickups: 156,
+        wasteRecycled: '2.5T',
+        efficiency: '85%'
+      }
+    };
+    
+    if (customerData) {
+      updatedProfileData = {
         username: customerData.customerName || 'John Smith',
         customerName: customerData.customerName || 'John Smith',
         customerId: customerData.customerId,
@@ -261,26 +172,20 @@ function App() {
       
       setProfileData(updatedProfileData);
       
-      // Create and store session in AsyncStorage
-      const sessionCreated = await SessionService.createSession(customerData);
-      if (sessionCreated) {
-        console.log('✅ Session created and stored in AsyncStorage');
-      } else {
-        console.warn('⚠️ Failed to create session, but continuing...');
-      }
+      // Save session to AsyncStorage
+      const sessionData = {
+        customerId: customerData.customerId,
+        mobileNumber: customerData.mobileNumber,
+        loginTime: new Date().toISOString()
+      };
+      
+      await SessionService.saveSession(sessionData, updatedProfileData);
+      console.log('✅ Session saved to AsyncStorage');
     }
     
     setShowOTP(false);
     setShowDashboard(true); // Go to Dashboard screen
   };
-
-  // Initialize push notifications when customer logs in
-  useEffect(() => {
-    if (profileData?.customerId) {
-      console.log('🔔 Initializing push notifications for customer:', profileData.customerId);
-      PushNotificationService.initialize(profileData.customerId, Platform.OS);
-    }
-  }, [profileData?.customerId]);
 
   const handleOTPSendAgain = () => {
     console.log('Send OTP again');
@@ -338,19 +243,14 @@ function App() {
   };
 
   const handleUpdateProfile = async (updatedData) => {
+    // Update profile data with the response from API
     setProfileData(updatedData);
     
-    // Update session in AsyncStorage with new profile data
-    if (updatedData && updatedData.customerId) {
-      await SessionService.updateSession({
-        customerName: updatedData.customerName || updatedData.username,
-        email: updatedData.email || '',
-        address: updatedData.address || '',
-        city: updatedData.city || '',
-        state: updatedData.state || '',
-        userType: updatedData.userType || '',
-      });
-      console.log('✅ Session updated after profile edit');
+    // Save updated profile data to AsyncStorage
+    const session = await SessionService.getSession();
+    if (session) {
+      await SessionService.saveSession(session, updatedData);
+      console.log('✅ Updated profile data saved to AsyncStorage');
     }
     
     setShowEditProfile(false);
@@ -358,71 +258,70 @@ function App() {
   };
 
   const handleLogout = async () => {
-    console.log('🚪 Logout initiated');
+    console.log('Logout confirmed');
     
-    try {
-      // Get session token before clearing
-      const sessionToken = await SessionService.getSessionToken();
-      const session = await SessionService.getSession();
-      
-      // Call logout API (optional - for logging purposes)
+    // Call logout API
+    const customerId = profileData?.customerId;
+    if (customerId) {
       try {
-        await fetchWithTimeout(
-          `${API_BASE_URL}/api/logout`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              customerId: profileData?.customerId,
-              sessionToken: sessionToken,
-            }),
+        const API_BASE_URL = __DEV__ 
+          ? 'http://localhost:5000'
+          : 'https://your-production-url.com';
+        
+        console.log('📤 Calling logout API...');
+        await fetch(`${API_BASE_URL}/api/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
           },
-          60000 // 60 seconds timeout
-        );
-      } catch (apiError) {
-        console.warn('⚠️ Logout API call failed (continuing anyway):', apiError);
+          body: JSON.stringify({
+            customerId: customerId,
+          }),
+        });
+        console.log('✅ Logout API called successfully');
+      } catch (error) {
+        console.warn('⚠️ Logout API call failed (continuing anyway):', error);
+        // Continue with logout even if API call fails
       }
-      
-      // Clear session from AsyncStorage
-      await SessionService.clearSession();
-      console.log('✅ Session cleared from AsyncStorage');
-      
-      // Reset all screen states to false
-      setShowProfile(false);
-      setShowEditProfile(false);
-      setShowDashboard(false);
-      setShowNotifications(false);
-      setShowFAQ(false);
-      setShowPickupHistory(false);
-      setShowGift(false);
-      setShowCart(false);
-      setShowHelp(false);
-      setShowOTP(false);
-      
-      // Reset profile data to default
-      setProfileData({
-        username: 'John Smith',
-        mobilePhone: '+44 555 5555 55',
-        address: 'hno 2-250,',
-        profileImage: null,
-        stats: {
-          pickups: 156,
-          wasteRecycled: '2.5T',
-          efficiency: '85%'
-        }
-      });
-      
-      // Navigate to login screen
-      setShowLogin(true);
-      console.log('✅ Logout completed');
-    } catch (error) {
-      console.error('❌ Error during logout:', error);
-      // Still navigate to login even if logout fails
-      setShowDashboard(false);
-      setShowLogin(true);
     }
+    
+    // Clear session from AsyncStorage
+    await SessionService.clearSession();
+    console.log('✅ Session cleared from AsyncStorage');
+    
+    // Reset all screen states to false
+    setShowProfile(false);
+    setShowEditProfile(false);
+    setShowDashboard(false);
+    setShowNotifications(false);
+    setShowFAQ(false);
+    setShowPickupHistory(false);
+    setShowGift(false);
+    setShowCart(false);
+    setShowHelp(false);
+    
+    // Clear profile data
+    setProfileData({
+      username: 'John Smith',
+      customerName: '',
+      customerId: null,
+      email: '',
+      mobilePhone: '+44 555 5555 55',
+      address: 'hno 2-250,',
+      city: '',
+      state: '',
+      userType: '',
+      status: '',
+      profileImage: null,
+      stats: {
+        pickups: 156,
+        wasteRecycled: '2.5T',
+        efficiency: '85%'
+      }
+    });
+    
+    // Navigate to login screen
+    setShowLogin(true);
   };
 
   const handleNotificationsBack = () => {
@@ -460,14 +359,8 @@ function App() {
     setShowProfile(true);
   };
 
-  // Show splash screen only if not checking session and no active session
-  if (showSplash && !isCheckingSession) {
+  if (showSplash) {
     return <SplashScreen onSplashComplete={handleSplashComplete} />;
-  }
-  
-  // Show nothing while checking session (brief loading state)
-  if (isCheckingSession) {
-    return null; // or return a loading screen if you have one
   }
 
   if (showProfile) {
@@ -557,7 +450,7 @@ function App() {
           setShowNotifications(false);
           setShowPickupHistory(true);
         }}
-        customerId={profileData?.customerId}
+        profileData={profileData}
       />
     );
   }
@@ -712,6 +605,7 @@ function App() {
         onNavigateToFAQ={handleNavigateToFAQ}
         onNavigateToGift={handleNavigateToGift}
         onNavigateToCart={handleNavigateToCart}
+        profileData={profileData}
       />
     );
   }
@@ -724,7 +618,6 @@ function App() {
         onAccept={handleOTPAccept}
         onSendAgain={handleOTPSendAgain}
         onReEnterMobile={handleOTPReEnterMobile}
-        onNavigateToSignup={handleNavigateToSignup}
       />
     );
   }
@@ -746,7 +639,6 @@ function App() {
         onBack={handleSignupBack}
         onSave={handleSignupSave}
         onNavigateToLogin={handleNavigateToLogin}
-        prefillMobileNumber={loginMobileNumber}
       />
     );
   }

@@ -9,7 +9,6 @@ import {
   Alert,
 } from 'react-native';
 import CustomStatusBar, { getStatusBarHeight } from '../../components/CustomStatusBar';
-import { fetchWithTimeout } from '../../utils/apiHelper';
 
 const { width, height } = Dimensions.get('window');
 
@@ -27,7 +26,7 @@ const API_BASE_URL = __DEV__
   ? 'http://localhost:5000'  // ✅ For iOS Simulator - use localhost
   : 'https://your-production-url.com';  // Production URL
 
-const OTPScreen = ({ mobileNumber, onBack, onAccept, onSendAgain, onReEnterMobile, onNavigateToSignup }) => {
+const OTPScreen = ({ mobileNumber, onBack, onAccept, onSendAgain, onReEnterMobile }) => {
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [userStartedTyping, setUserStartedTyping] = useState(false);
   const [timer, setTimer] = useState(60);
@@ -94,19 +93,15 @@ const OTPScreen = ({ mobileNumber, onBack, onAccept, onSendAgain, onReEnterMobil
       console.log('🔄 Resending OTP for:', mobileNum);
       console.log('🔄 API URL:', `${API_BASE_URL}/api/login/resend-otp`);
       
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/login/resend-otp`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            mobileNumber: mobileNum,
-          }),
+      const response = await fetch(`${API_BASE_URL}/api/login/resend-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        60000 // 60 seconds timeout
-      );
+        body: JSON.stringify({
+          mobileNumber: mobileNum,
+        }),
+      });
       
       console.log('🔄 Response status:', response.status);
 
@@ -169,80 +164,35 @@ const OTPScreen = ({ mobileNumber, onBack, onAccept, onSendAgain, onReEnterMobil
     const otpString = otp.join('');
 
     try {
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/login/verify-otp`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            mobileNumber: mobileNumber,
-            otp: otpString,
-          }),
+      const response = await fetch(`${API_BASE_URL}/api/login/verify-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        60000 // 60 seconds timeout
-      );
+        body: JSON.stringify({
+          mobileNumber: mobileNumber,
+          otp: otpString,
+        }),
+      });
 
       const result = await response.json();
 
       if (response.ok && result.status === 'success') {
-        // Check if user exists in database
-        const userExists = result.userExists === true;
-        const userApproved = result.userApproved === true;
-        
-        if (userExists && userApproved) {
-          // User exists and is approved - navigate to Dashboard
-          Alert.alert(
-            'Success',
-            result.message || 'Login successful!',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  // Pass customer data to onAccept for Dashboard
-                  if (onAccept) {
-                    onAccept(result.data);
-                  }
-                },
+        Alert.alert(
+          'Success',
+          result.message || 'Login successful!',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Pass customer data to onAccept if needed
+                if (onAccept) {
+                  onAccept(result.data);
+                }
               },
-            ]
-          );
-        } else if (userExists && !userApproved) {
-          // User exists but not approved - show message and navigate to Dashboard anyway
-          Alert.alert(
-            'Profile Under Consideration',
-            'Your profile is under consideration. Please wait for approval.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  // Pass customer data to onAccept for Dashboard
-                  if (onAccept) {
-                    onAccept(result.data);
-                  }
-                },
-              },
-            ]
-          );
-        } else {
-          // User does NOT exist - navigate to SignupScreen
-          Alert.alert(
-            'New User',
-            'Mobile number not registered. Please sign up to continue.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  // Navigate to signup - pass mobile number
-                  if (onNavigateToSignup) {
-                    onNavigateToSignup(mobileNumber);
-                  }
-                },
-              },
-            ]
-          );
-        }
+            },
+          ]
+        );
       } else {
         // Handle specific error messages from backend
         let errorMessage = result.message || 'Invalid OTP. Please try again.';

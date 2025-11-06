@@ -14,7 +14,6 @@ import {
   Alert,
 } from 'react-native';
 import CustomStatusBar, { getStatusBarHeight } from '../../components/CustomStatusBar';
-import { fetchWithTimeout } from '../../utils/apiHelper';
 
 const { width, height } = Dimensions.get('window');
 
@@ -73,19 +72,15 @@ const LoginScreen = ({ onBack, onGenerateOTP, onNext, onNavigateToSignup }) => {
       console.log('🔵 LoginScreen: Calling API...');
       console.log('🔵 LoginScreen: ========================================');
       
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/login/generate-otp`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            mobileNumber: mobileNumber,
-          }),
+      const response = await fetch(`${API_BASE_URL}/api/login/generate-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        60000 // 60 seconds timeout
-      );
+        body: JSON.stringify({
+          mobileNumber: mobileNumber,
+        }),
+      });
 
       console.log('🔵 LoginScreen: Response received');
       console.log('🔵 LoginScreen: Response status:', response.status);
@@ -252,6 +247,17 @@ const LoginScreen = ({ onBack, onGenerateOTP, onNext, onNavigateToSignup }) => {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Sign up text at bottom */}
+          <View style={styles.signInContainer}>
+            <View style={styles.signInTextContainer}>
+              <Text style={styles.signInText}>Don't have an account?</Text>
+              <TouchableOpacity onPress={onNavigateToSignup} style={styles.signUpButton}>
+                <Text style={styles.signUpLink}>Sign up</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.bottomSpacer} />
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -363,6 +369,43 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: Math.max(Math.min(width * 0.035, 18), 14),
     fontWeight: 'bold',
+  },
+  signInContainer: {
+    alignItems: 'center',
+    paddingVertical: Math.max(height * 0.04, 80),
+    paddingHorizontal: Math.max(width * 0.04, 16),
+    backgroundColor: '#FFFFFF',
+    marginTop: Math.max(height * 0.02, 15),
+  },
+  bottomSpacer: {
+    height: Math.max(height * 0.15, 100),
+  },
+  signInTextContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  signInText: {
+    fontSize: Math.max(Math.min(width * 0.035, 18), 14),
+    color: '#666666',
+    textAlign: 'center',
+    lineHeight: Math.max(Math.min(width * 0.04, 22), 18),
+    marginRight: 5,
+  },
+  signUpButton: {
+    paddingHorizontal: Math.max(width * 0.02, 8),
+    paddingVertical: Math.max(height * 0.005, 4),
+    borderRadius: Math.max(width * 0.015, 6),
+    backgroundColor: 'rgba(46, 125, 50, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(46, 125, 50, 0.3)',
+  },
+  signUpLink: {
+    fontSize: Math.max(Math.min(width * 0.035, 18), 14),
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    textDecorationLine: 'underline',
   },
 });
 

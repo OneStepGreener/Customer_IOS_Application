@@ -27,13 +27,6 @@ import {
   getShadowStyles,
   getResponsiveDimensions 
 } from '../../utils/responsive';
-import SessionService from '../../services/SessionService';
-import { fetchWithTimeout } from '../../utils/apiHelper';
-
-// API Base URL for logout
-const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:5000'
-  : 'https://your-production-url.com';
 
 const { width, height } = Dimensions.get('window');
 
@@ -140,53 +133,13 @@ const ProfileScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, onNavi
     setShowLogoutModal(true);
   };
 
-  const handleConfirmLogout = async () => {
-    console.log('🚪 Confirm logout clicked');
+  const handleConfirmLogout = () => {
+    console.log('Confirm logout clicked');
     setShowLogoutModal(false);
-    
-    try {
-      // Get session token before clearing
-      const sessionToken = await SessionService.getSessionToken();
-      const session = await SessionService.getSession();
-      
-      // Call logout API
-      try {
-        console.log('📡 Calling logout API...');
-        await fetchWithTimeout(
-          `${API_BASE_URL}/api/logout`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              customerId: profileData?.customerId,
-              sessionToken: sessionToken,
-            }),
-          },
-          60000 // 60 seconds timeout
-        );
-        console.log('✅ Logout API called successfully');
-      } catch (apiError) {
-        console.warn('⚠️ Logout API call failed (continuing anyway):', apiError);
-      }
-      
-      // Clear session from AsyncStorage
-      await SessionService.clearSession();
-      console.log('✅ Session cleared from AsyncStorage');
-      
-      // Call parent's onLogout handler for navigation/state management
-      if (onLogout) {
-        onLogout();
-      } else {
-        console.warn('⚠️ onLogout function not provided');
-      }
-    } catch (error) {
-      console.error('❌ Error during logout:', error);
-      // Still call onLogout even if there's an error
-      if (onLogout) {
-        onLogout();
-      }
+    if (onLogout) {
+      onLogout();
+    } else {
+      console.warn('onLogout function not provided');
     }
   };
 

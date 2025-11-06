@@ -1,17 +1,6 @@
 """
 Main Flask application file.
 API endpoints for B2C Customer App.
-
-CODE SECTIONS:
-==============
-1. APP INITIALIZATION & CONFIGURATION
-2. HEALTH CHECK & TESTING ENDPOINTS
-3. CUSTOMER SIGNUP API
-4. LOGIN & OTP MANAGEMENT (Generate, Verify, Resend)
-5. PROFILE MANAGEMENT (Edit Profile)
-6. PUSH NOTIFICATIONS API (Get Notifications, Mark Read, Register Device)
-7. SESSION MANAGEMENT API (Logout)
-8. ERROR HANDLERS
 """
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -19,7 +8,7 @@ from database import db
 from config import Config
 from datetime import datetime, timedelta
 import re
-import secrets
+import random
 import requests
 
 
@@ -33,19 +22,12 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
     
-    # ========================================================================
-    # SECTION 1: APP INITIALIZATION & CONFIGURATION
-    # ========================================================================
     # Enable CORS for React Native app
     CORS(app, resources={r"/*": {"origins": "*"}})
     
     # In-memory OTP storage (in production, use Redis or database)
     # Format: {mobile_number: {'otp': '123456', 'expires_at': datetime, 'verified': False}}
     otp_storage = {}
-    
-    # ========================================================================
-    # SECTION 2: HEALTH CHECK & TESTING ENDPOINTS
-    # ========================================================================
     
     @app.route('/health', methods=['GET'])
     def health_check():
@@ -76,8 +58,8 @@ def create_app() -> Flask:
                     'message': 'Valid 10-digit mobile number required'
                 }), 400
             
-            # Generate cryptographically secure random 6-digit OTP
-            otp = str(secrets.randbelow(900000) + 100000)  # Generates random number between 100000-999999
+            # Generate OTP
+            otp = str(random.randint(100000, 999999))
             
             # Store OTP for 5 minutes
             expires_at = datetime.now() + timedelta(minutes=5)
@@ -103,12 +85,6 @@ def create_app() -> Flask:
                 'status': 'error',
                 'message': f'Error: {str(e)}'
             }), 500
-    
-    # ========================================================================
-    # SECTION 3: CUSTOMER SIGNUP API
-    # ========================================================================
-    # This endpoint handles new customer registration
-    # Creates customer record in b2c_customer_master table with status='PENDING'
     
     @app.route('/api/signup', methods=['POST'])
     def signup():
@@ -301,11 +277,21 @@ def create_app() -> Flask:
                 'message': f'Failed to create account: {str(e)}'
             }), 500
     
-    # ========================================================================
-    # SECTION 4: LOGIN & OTP MANAGEMENT
-    # ========================================================================
-    # This section handles OTP generation, verification, and resend functionality
-    # Uses PRP SMS API for sending OTPs dynamically (not hardcoded)
+    @app.errorhandler(404)
+    def not_found(error):
+        """Handle 404 errors."""
+        return jsonify({
+            'status': 'error',
+            'message': 'Endpoint not found'
+        }), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        """Handle 500 errors."""
+        return jsonify({
+            'status': 'error',
+            'message': 'Internal server error'
+        }), 500
     
     @app.route('/api/login/generate-otp', methods=['POST'])
     def generate_otp():
@@ -337,7 +323,7 @@ def create_app() -> Flask:
                     'message': 'Please enter a valid 10-digit mobile number'
                 }), 400
             
-            # Check if mobile number exists in database (but allow OTP generation even if not found)
+            # Check if mobile number exists in database (customer should be registered)
             # Check multiple formats: +91{mobile}, +91/{mobile}, 91{mobile}, plain {mobile}
             check_query = """
                 SELECT customer_id, customer_name, status, contact_no 
@@ -358,49 +344,47 @@ def create_app() -> Flask:
             )
             customer_result = db.execute_query(check_query, check_params)
             
-            # Track if user exists (for later verification)
-            user_exists = bool(customer_result)
-            customer_id = None
-            customer_name = None
-            customer_status = None
+            if not customer_result:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Mobile number not registered. Please sign up first.'
+                }), 404
             
-            if customer_result:
-                customer = customer_result[0]
-                customer_id = customer.get('customer_id')
-                customer_name = customer.get('customer_name')
-                customer_status = customer.get('status')
+            customer = customer_result[0]
             
-            # Generate cryptographically secure random 6-digit OTP
-            # Using secrets module for secure random number generation
-            otp = str(secrets.randbelow(900000) + 100000)  # Generates random number between 100000-999999
+            # Check if customer is approved (only approved customers can login)
+            if customer.get('status') != 'APPROVED':
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Your profile is under consideration. Please wait for approval.'
+                }), 403
+            
+            # Generate 6-digit OTP
+            otp = str(random.randint(100000, 999999))
             
             print(f"\n{'='*70}")
             print(f"📱 OTP GENERATION FOR: {mobile_number}")
             print(f"{'='*70}")
             print(f"🔑 Generated OTP: {otp}")
-            if user_exists:
-                print(f"👤 Customer: {customer_name} (ID: {customer_id})")
-                print(f"✅ Status: {customer_status}")
-            else:
-                print(f"👤 User: Not registered (will be directed to signup after OTP verification)")
+            print(f"👤 Customer: {customer.get('customer_name')} (ID: {customer.get('customer_id')})")
+            print(f"📞 Contact: {customer.get('contact_no')}")
+            print(f"✅ Status: {customer.get('status')}")
             print(f"{'='*70}\n")
             
-            # Store OTP with expiration (5 minutes) - also store user existence status
+            # Store OTP with expiration (5 minutes)
             expires_at = datetime.now() + timedelta(minutes=5)
             otp_storage[mobile_number] = {
                 'otp': otp,
                 'expires_at': expires_at,
                 'verified': False,
-                'customer_id': customer_id,
-                'user_exists': user_exists,
-                'customer_status': customer_status
+                'customer_id': customer.get('customer_id')
             }
             
             # Send OTP via PRP SMS API using Template Name (as per PRP documentation)
-            prp_api_key = app.config.get('PRP_API_KEY')
-            prp_api_base = app.config.get('PRP_API_BASE_URL')
-            prp_sender_id = app.config.get('PRP_SENDER_ID')
-            prp_template_name = app.config.get('PRP_TEMPLATE_NAME')
+            prp_api_key = app.config.get('PRP_API_KEY', '9n5ZIuuNKTkIGyJ')
+            prp_api_base = app.config.get('PRP_API_BASE_URL', 'https://api.bulksmsadmin.com/BulkSMSapi/keyApiSendSMS')
+            prp_sender_id = app.config.get('PRP_SENDER_ID', 'PRP***')
+            prp_template_name = app.config.get('PRP_TEMPLATE_NAME', 'OSG_SMS_OTP')
             
             # PRP API endpoint for sending SMS using template name
             prp_api_url = f"{prp_api_base}/SendSmsTemplateName"
@@ -409,16 +393,14 @@ def create_app() -> Flask:
             mobile_with_country = f"91{mobile_number}"
             
             # PRP API request body format (as per documentation)
-            # Send dynamically generated OTP to PRP API via templateParams
-            # IMPORTANT: templateParams must be a STRING containing the OTP value
-            # The PRP template will replace the variable placeholder with this OTP value
+            # IMPORTANT: templateParams must be a STRING, not an array
             payload = {
                 "sender": prp_sender_id,
                 "templateName": prp_template_name,
                 "smsReciever": [
                     {
                         "mobileNo": mobile_with_country,
-                        "templateParams": otp  # Dynamically generated OTP sent as STRING to PRP API
+                        "templateParams": otp  # OTP as STRING (PRP API requirement)
                     }
                 ]
             }
@@ -430,23 +412,22 @@ def create_app() -> Flask:
             }
             
             print(f"\n{'='*70}")
-            print(f"📱 SENDING DYNAMIC OTP VIA PRP API")
+            print(f"📱 SENDING OTP VIA PRP API")
             print(f"{'='*70}")
             print(f"📞 Mobile: {mobile_with_country}")
-            print(f"🔑 Generated OTP: {otp} (Dynamically generated, not hardcoded)")
+            print(f"🔑 OTP: {otp}")
             print(f"📋 Template: {prp_template_name}")
             print(f"📤 Sender: {prp_sender_id}")
             print(f"🌐 URL: {prp_api_url}")
-            print(f"📦 templateParams (sent to PRP): {otp}")
-            print(f"✅ OTP is dynamically generated and sent to PRP API")
+            print(f"📦 templateParams: {otp}")
             print(f"{'='*70}\n")
             
             sms_sent = False
             error_message = None
             
             try:
-                # Use 30 second timeout to allow sufficient time for SMS delivery
-                response = requests.post(prp_api_url, json=payload, headers=headers, timeout=30)
+                # Use 3 second timeout for fast SMS delivery
+                response = requests.post(prp_api_url, json=payload, headers=headers, timeout=3)
                 print(f"PRP API Response - Status: {response.status_code}")
                 print(f"PRP API Response Body: {response.text}")
                 
@@ -499,8 +480,7 @@ def create_app() -> Flask:
             # Prepare response data
             response_data = {
                 'mobileNumber': mobile_number,
-                'smsSent': sms_sent,
-                'userExists': user_exists  # Indicate if user exists in database
+                'smsSent': sms_sent
             }
             
             # Include OTP in response for testing/debugging (remove in production)
@@ -521,10 +501,6 @@ def create_app() -> Flask:
                 'status': 'error',
                 'message': f'Failed to generate OTP: {str(e)}'
             }), 500
-    
-    # OTP Verification Endpoint
-    # Verifies OTP and checks if user exists in database
-    # Returns userExists and userApproved flags for frontend routing
     
     @app.route('/api/login/verify-otp', methods=['POST'])
     def verify_otp():
@@ -601,75 +577,43 @@ def create_app() -> Flask:
                     'message': 'Invalid OTP. Please try again.'
                 }), 400
             
-            # OTP is valid - mark as verified and check if user exists
+            # OTP is valid - mark as verified and get customer data
             stored_otp_data['verified'] = True
-            user_exists = stored_otp_data.get('user_exists', False)
-            customer_id = stored_otp_data.get('customer_id')
-            customer_status = stored_otp_data.get('customer_status')
+            customer_id = stored_otp_data['customer_id']
+            
+            # Get customer details from database
+            customer_query = """
+                SELECT customer_id, customer_name, email, contact_no, address, 
+                       city, state, status, user_type
+                FROM b2c_customer_master 
+                WHERE customer_id = %s
+            """
+            customer_result = db.execute_query(customer_query, (customer_id,))
+            
+            if not customer_result:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Customer not found'
+                }), 404
+            
+            customer = customer_result[0]
             
             # Clean up OTP from storage after successful verification
             del otp_storage[mobile_number]
             
-            # If user exists in database, get customer details
-            if user_exists and customer_id:
-                # Get customer details from database
-                customer_query = """
-                    SELECT customer_id, customer_name, email, contact_no, address, 
-                           city, state, status, user_type
-                    FROM b2c_customer_master 
-                    WHERE customer_id = %s
-                """
-                customer_result = db.execute_query(customer_query, (customer_id,))
-                
-                if customer_result:
-                    customer = customer_result[0]
-                    
-                    # Check if customer is approved
-                    if customer.get('status') != 'APPROVED':
-                        return jsonify({
-                            'status': 'success',
-                            'message': 'OTP verified successfully',
-                            'userExists': True,
-                            'userApproved': False,
-                            'data': {
-                                'customerId': customer.get('customer_id'),
-                                'customerName': customer.get('customer_name'),
-                                'email': customer.get('email'),
-                                'mobileNumber': mobile_number,
-                                'address': customer.get('address'),
-                                'city': customer.get('city'),
-                                'state': customer.get('state'),
-                                'userType': customer.get('user_type'),
-                                'status': customer.get('status')
-                            }
-                        }), 200
-                    
-                    # User exists and is approved
-                    return jsonify({
-                        'status': 'success',
-                        'message': 'OTP verified successfully',
-                        'userExists': True,
-                        'userApproved': True,
-                        'data': {
-                            'customerId': customer.get('customer_id'),
-                            'customerName': customer.get('customer_name'),
-                            'email': customer.get('email'),
-                            'mobileNumber': mobile_number,
-                            'address': customer.get('address'),
-                            'city': customer.get('city'),
-                            'state': customer.get('state'),
-                            'userType': customer.get('user_type'),
-                            'status': customer.get('status')
-                        }
-                    }), 200
-            
-            # User does NOT exist in database - return success but indicate user doesn't exist
             return jsonify({
                 'status': 'success',
                 'message': 'OTP verified successfully',
-                'userExists': False,
                 'data': {
-                    'mobileNumber': mobile_number
+                    'customerId': customer.get('customer_id'),
+                    'customerName': customer.get('customer_name'),
+                    'email': customer.get('email'),
+                    'mobileNumber': mobile_number,
+                    'address': customer.get('address'),
+                    'city': customer.get('city'),
+                    'state': customer.get('state'),
+                    'userType': customer.get('user_type'),
+                    'status': customer.get('status')
                 }
             }), 200
             
@@ -680,229 +624,333 @@ def create_app() -> Flask:
                 'message': f'Failed to verify OTP: {str(e)}'
             }), 500
     
-    # Resend OTP Endpoint
-    # Allows users to request a new OTP if they didn't receive the first one
-    # Only works for registered and approved customers
-    
-    @app.route('/api/login/resend-otp', methods=['POST'])
-    def resend_otp():
+    @app.route('/api/notifications', methods=['GET'])
+    def get_notifications():
         """
-        Resend OTP to mobile number via PRP OTP service.
-        This endpoint is used when user requests a new OTP (e.g., didn't receive SMS, expired, etc.)
+        Get notifications for a customer.
+        Generates notifications dynamically from customer data (no database table needed).
         
-        Expected JSON body:
-        {
-            "mobileNumber": "9876543210"  // 10-digit mobile number
-        }
+        Query Parameters:
+            customerId: string (required) - Customer ID
         
         Returns:
-            JSON response with success/error status
+            JSON response with list of notifications
         """
         try:
-            data = request.get_json()
-            mobile_number = (data.get('mobileNumber') or '').strip()
+            customer_id = request.args.get('customerId')
             
-            # Validate mobile number
-            if not mobile_number:
+            if not customer_id:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Mobile number is required'
+                    'message': 'Customer ID is required'
                 }), 400
             
-            if not re.match(r'^[0-9]{10}$', mobile_number):
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Please enter a valid 10-digit mobile number'
-                }), 400
-            
-            # Check if mobile number exists in database (customer should be registered)
-            # Check multiple formats: +91{mobile}, +91/{mobile}, 91{mobile}, plain {mobile}
-            check_query = """
-                SELECT customer_id, customer_name, status, contact_no 
+            # Get customer data
+            customer_query = """
+                SELECT customer_id, customer_name, status, created_at, updated_at,
+                       est_waste_qty, user_type, city, state
                 FROM b2c_customer_master 
-                WHERE contact_no = %s 
-                   OR contact_no = %s 
-                   OR contact_no = %s
-                   OR contact_no = %s
-                   OR contact_no LIKE %s
-                LIMIT 1
+                WHERE customer_id = %s
             """
-            check_params = (
-                f"+91{mobile_number}",
-                f"+91/{mobile_number}",
-                f"91{mobile_number}",
-                mobile_number,
-                f"%{mobile_number}"
-            )
-            customer_result = db.execute_query(check_query, check_params)
+            customer_result = db.execute_query(customer_query, (customer_id,))
             
             if not customer_result:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Mobile number not registered. Please sign up first.'
+                    'message': 'Customer not found'
                 }), 404
             
             customer = customer_result[0]
+            notifications = []
             
-            # Check if customer is approved (only approved customers can login)
-            if customer.get('status') != 'APPROVED':
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Your profile is under consideration. Please wait for approval.'
-                }), 403
+            # Calculate time differences
+            created_at = customer.get('created_at')
+            updated_at = customer.get('updated_at')
+            status = customer.get('status', '')
+            customer_name = customer.get('customer_name', 'Customer')
             
-            # Generate new cryptographically secure random 6-digit OTP
-            # Using secrets module for secure random number generation
-            otp = str(secrets.randbelow(900000) + 100000)  # Generates random number between 100000-999999
-            
-            print(f"\n{'='*70}")
-            print(f"📱 RESENDING OTP FOR: {mobile_number}")
-            print(f"{'='*70}")
-            print(f"🔑 Generated New OTP: {otp}")
-            print(f"👤 Customer: {customer.get('customer_name')} (ID: {customer.get('customer_id')})")
-            print(f"📞 Contact: {customer.get('contact_no')}")
-            print(f"✅ Status: {customer.get('status')}")
-            print(f"{'='*70}\n")
-            
-            # Store new OTP with expiration (5 minutes) - this overwrites any existing OTP
-            expires_at = datetime.now() + timedelta(minutes=5)
-            otp_storage[mobile_number] = {
-                'otp': otp,
-                'expires_at': expires_at,
-                'verified': False,
-                'customer_id': customer.get('customer_id')
-            }
-            
-            # Send OTP via PRP SMS API using Template Name (as per PRP documentation)
-            prp_api_key = app.config.get('PRP_API_KEY')
-            prp_api_base = app.config.get('PRP_API_BASE_URL')
-            prp_sender_id = app.config.get('PRP_SENDER_ID')
-            prp_template_name = app.config.get('PRP_TEMPLATE_NAME')
-            
-            # PRP API endpoint for sending SMS using template name
-            prp_api_url = f"{prp_api_base}/SendSmsTemplateName"
-            
-            # Mobile number format: 91{10-digit} (country code + mobile, no + sign)
-            mobile_with_country = f"91{mobile_number}"
-            
-            # PRP API request body format (as per documentation)
-            # Send dynamically generated OTP to PRP API via templateParams
-            # IMPORTANT: templateParams must be a STRING containing the OTP value
-            # The PRP template will replace the variable placeholder with this OTP value
-            payload = {
-                "sender": prp_sender_id,
-                "templateName": prp_template_name,
-                "smsReciever": [
-                    {
-                        "mobileNo": mobile_with_country,
-                        "templateParams": otp  # Dynamically generated OTP sent as STRING to PRP API
-                    }
-                ]
-            }
-            
-            # PRP API headers (as per documentation)
-            headers = {
-                "apikey": prp_api_key,  # Note: lowercase 'apikey' in header
-                "Content-Type": "application/json"
-            }
-            
-            print(f"\n{'='*70}")
-            print(f"📱 RESENDING OTP VIA PRP API")
-            print(f"{'='*70}")
-            print(f"📞 Mobile: {mobile_with_country}")
-            print(f"🔑 Generated New OTP: {otp} (Dynamically generated, not hardcoded)")
-            print(f"📋 Template: {prp_template_name}")
-            print(f"📤 Sender: {prp_sender_id}")
-            print(f"🌐 URL: {prp_api_url}")
-            print(f"📦 templateParams (sent to PRP): {otp}")
-            print(f"✅ New OTP is dynamically generated and sent to PRP API")
-            print(f"{'='*70}\n")
-            
-            sms_sent = False
-            error_message = None
-            
-            try:
-                # Use 30 second timeout to allow sufficient time for SMS delivery
-                response = requests.post(prp_api_url, json=payload, headers=headers, timeout=30)
-                print(f"PRP API Response - Status: {response.status_code}")
-                print(f"PRP API Response Body: {response.text}")
-                
-                if response.status_code == 200:
-                    # Check if response indicates success
-                    try:
-                        response_data = response.json()
-                        # PRP API returns isSuccess: true for successful SMS
-                        if response_data.get('isSuccess') == True or response_data.get('status') == 'success' or 'success' in response.text.lower():
-                            sms_sent = True
-                            print(f"✅ PRP API confirmed SMS sent: {response_data.get('returnMessage', 'N/A')}")
-                        else:
-                            error_message = response.text
-                    except Exception as json_error:
-                        # If response is not JSON but status is 200, consider it success
-                        print(f"⚠️ Could not parse JSON response: {json_error}")
-                        sms_sent = True  # Status 200 usually means success
-                else:
-                    error_message = response.text
+            # Helper function to format time ago
+            def get_time_ago(date_str):
+                if not date_str:
+                    return 'Recently'
+                try:
+                    if isinstance(date_str, str):
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                    else:
+                        date_obj = date_str
+                    now = datetime.now()
+                    diff = now - date_obj
                     
-            except requests.exceptions.Timeout:
-                error_message = "SMS API timeout (may still be sent)"
-                print(f"⚠️ PRP API timeout - SMS may still be delivered")
-            except Exception as e:
-                print(f"PRP API Error: {e}")
-                error_message = str(e)
+                    if diff.days > 0:
+                        if diff.days == 1:
+                            return '1 day ago'
+                        elif diff.days < 7:
+                            return f'{diff.days} days ago'
+                        elif diff.days < 30:
+                            weeks = diff.days // 7
+                            return f'{weeks} week{"s" if weeks > 1 else ""} ago'
+                        else:
+                            months = diff.days // 30
+                            return f'{months} month{"s" if months > 1 else ""} ago'
+                    elif diff.seconds >= 3600:
+                        hours = diff.seconds // 3600
+                        return f'{hours} hour{"s" if hours > 1 else ""} ago'
+                    elif diff.seconds >= 60:
+                        minutes = diff.seconds // 60
+                        return f'{minutes} minute{"s" if minutes > 1 else ""} ago'
+                    else:
+                        return 'Just now'
+                except:
+                    return 'Recently'
             
-            # Log result
-            if sms_sent:
-                print(f"\n{'='*70}")
-                print(f"✅ RESEND OTP SMS SENT SUCCESSFULLY")
-                print(f"{'='*70}")
-                print(f"📱 Mobile: {mobile_number}")
-                print(f"🔑 New OTP: {otp}")
-                print(f"⏰ Valid for 5 minutes")
-                print(f"💬 PRP Response: {response.text if 'response' in locals() else 'N/A'}")
-                print(f"{'='*70}\n")
-                success_message = 'New OTP sent successfully to your mobile number'
-            else:
-                print(f"\n{'='*70}")
-                print(f"⚠️ WARNING: RESEND OTP SMS MAY NOT HAVE BEEN SENT")
-                print(f"{'='*70}")
-                print(f"📱 Mobile: {mobile_number}")
-                print(f"🔑 GENERATED NEW OTP: {otp}")
-                print(f"⏰ Valid for 5 minutes")
-                print(f"❌ Error: {error_message}")
-                print(f"{'='*70}\n")
-                success_message = f'New OTP generated. Please check SMS on {mobile_number}'
+            # Notification 1: Account Approval (if approved)
+            if status == 'APPROVED':
+                notifications.append({
+                    'id': f'approval_{customer_id}',
+                    'title': 'Account Approved',
+                    'message': f'Great news, {customer_name}! Your account has been approved. You can now access all features of the app.',
+                    'time': get_time_ago(updated_at if updated_at and updated_at != created_at else created_at),
+                    'type': 'update',
+                    'icon': '✅',
+                    'isRead': False,
+                    'priority': 'high',
+                    'createdAt': updated_at if updated_at and updated_at != created_at else created_at
+                })
             
-            # Prepare response data
-            response_data = {
-                'mobileNumber': mobile_number,
-                'smsSent': sms_sent
-            }
+            # Notification 2: Welcome message (if recently created)
+            if created_at:
+                try:
+                    if isinstance(created_at, str):
+                        created_date = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                    else:
+                        created_date = created_at
+                    days_since_creation = (datetime.now() - created_date).days
+                    if days_since_creation <= 7:
+                        notifications.append({
+                            'id': f'welcome_{customer_id}',
+                            'title': 'Welcome to OneStep Greener!',
+                            'message': f'Welcome {customer_name}! Thank you for joining our recycling community. Start your eco-journey today!',
+                            'time': get_time_ago(created_at),
+                            'type': 'update',
+                            'icon': '🌱',
+                            'isRead': days_since_creation > 1,
+                            'priority': 'high',
+                            'createdAt': created_at
+                        })
+                except Exception as date_error:
+                    print(f"Warning: Could not parse created_at date: {date_error}")
             
-            # Include OTP in response for testing/debugging (remove in production)
-            # This helps verify OTP generation when SMS delivery is problematic
-            if not sms_sent or app.config.get('FLASK_DEBUG', False):
-                response_data['otp'] = otp  # Include OTP for manual testing
-                response_data['otpMessage'] = f'New OTP: {otp} (Valid for 5 minutes) - Use this to test if SMS is not received'
+            # Notification 3: Profile under consideration (if pending)
+            if status == 'PENDING':
+                notifications.append({
+                    'id': f'pending_{customer_id}',
+                    'title': 'Profile Under Review',
+                    'message': f'Hi {customer_name}, your profile is currently under consideration. We\'ll notify you once it\'s approved.',
+                    'time': get_time_ago(created_at),
+                    'type': 'update',
+                    'icon': '⏳',
+                    'isRead': False,
+                    'priority': 'medium',
+                    'createdAt': created_at
+                })
+            
+            # Notification 4: Environmental impact (based on waste quantity)
+            est_waste = customer.get('est_waste_qty')
+            if est_waste and est_waste > 0:
+                try:
+                    # Convert to float if it's a Decimal or string
+                    est_waste_float = float(est_waste) if est_waste else 0
+                    
+                    if est_waste_float > 0:
+                        # Calculate environmental impact
+                        trees_saved = int(est_waste_float * 0.08)  # Approx 0.08 trees per kg
+                        co2_reduced = int(est_waste_float * 6)  # Approx 6kg CO2 per kg waste
+                        
+                        notifications.append({
+                            'id': f'impact_{customer_id}',
+                            'title': 'Environmental Impact',
+                            'message': f'Your estimated waste quantity of {est_waste_float}kg could save approximately {trees_saved} trees and reduce {co2_reduced}kg of CO2 emissions!',
+                            'time': get_time_ago(created_at),
+                            'type': 'impact',
+                            'icon': '🌍',
+                            'isRead': True,
+                            'priority': 'medium',
+                            'createdAt': created_at
+                        })
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not process waste quantity {est_waste}: {e}")
+                    # Skip this notification if conversion fails
+            
+            # Notification 5: Service information
+            user_type = customer.get('user_type', '')
+            city = customer.get('city', '')
+            if city:
+                notifications.append({
+                    'id': f'service_{customer_id}',
+                    'title': 'Service Available',
+                    'message': f'Our recycling pickup service is available in {city}. Schedule your first pickup from the dashboard!',
+                    'time': get_time_ago(created_at),
+                    'type': 'update',
+                    'icon': '♻️',
+                    'isRead': True,
+                    'priority': 'low',
+                    'createdAt': created_at
+                })
+            
+            # Sort notifications by creation date (newest first)
+            notifications.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+            
+            # Limit to 20 most recent
+            notifications = notifications[:20]
             
             return jsonify({
                 'status': 'success',
-                'message': success_message,
-                'data': response_data
+                'data': {
+                    'notifications': notifications,
+                    'unreadCount': sum(1 for n in notifications if not n.get('isRead', False))
+                }
             }), 200
             
         except Exception as e:
-            print(f"Error in resend_otp: {str(e)}")
+            print(f"Error in get_notifications: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'message': f'Failed to resend OTP: {str(e)}'
+                'message': f'Failed to fetch notifications: {str(e)}'
             }), 500
     
-    # ========================================================================
-    # SECTION 5: PROFILE MANAGEMENT
-    # ========================================================================
-    # This section handles customer profile editing
-    # Allows partial updates to customer information
+    @app.route('/api/notifications/mark-read', methods=['POST'])
+    def mark_notification_read():
+        """
+        Mark notification as read (optional - for future use with stored notifications).
+        Currently notifications are generated dynamically, so this is a placeholder.
+        
+        Expected JSON body:
+        {
+            "customerId": "1001",
+            "notificationId": "approval_1001"  // Optional
+        }
+        
+        Returns:
+            JSON response with success status
+        """
+        try:
+            data = request.get_json()
+            customer_id = data.get('customerId')
+            
+            if not customer_id:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Customer ID is required'
+                }), 400
+            
+            # Since notifications are generated dynamically, we can't mark them as read permanently
+            # This endpoint is here for future use if we implement notification storage
+            return jsonify({
+                'status': 'success',
+                'message': 'Notification marked as read'
+            }), 200
+            
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to mark notification as read: {str(e)}'
+            }), 500
+    
+    @app.route('/api/notifications/register-device', methods=['POST'])
+    def register_device_token():
+        """
+        Register device token for push notifications.
+        Stores FCM/APNS token for sending push notifications.
+        
+        Expected JSON body:
+        {
+            "customerId": "1001",
+            "deviceToken": "fcm_token_or_apns_token",
+            "platform": "ios" or "android"
+        }
+        
+        Returns:
+            JSON response with success status
+        """
+        try:
+            data = request.get_json()
+            customer_id = data.get('customerId')
+            device_token = data.get('deviceToken')
+            platform = data.get('platform', 'android')  # 'ios' or 'android'
+            
+            if not customer_id:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Customer ID is required'
+                }), 400
+            
+            if not device_token:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Device token is required'
+                }), 400
+            
+            # Check if customer exists
+            customer_query = "SELECT customer_id FROM b2c_customer_master WHERE customer_id = %s"
+            customer_result = db.execute_query(customer_query, (customer_id,))
+            
+            if not customer_result:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Customer not found'
+                }), 404
+            
+            # Check if device_tokens table exists, if not create it
+            # This is a minimal table just for push notification tokens
+            try:
+                # Try to create table if it doesn't exist
+                create_table_query = """
+                    CREATE TABLE IF NOT EXISTS device_tokens (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        customer_id VARCHAR(50) NOT NULL,
+                        device_token TEXT NOT NULL,
+                        platform VARCHAR(10) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_customer_token (customer_id, device_token(255)),
+                        INDEX idx_customer_id (customer_id),
+                        INDEX idx_device_token (device_token(255))
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+                db.execute_query(create_table_query, fetch=False)
+                
+                # Insert or update device token
+                insert_query = """
+                    INSERT INTO device_tokens (customer_id, device_token, platform, updated_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        device_token = VALUES(device_token),
+                        platform = VALUES(platform),
+                        updated_at = VALUES(updated_at)
+                """
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                db.execute_query(insert_query, (customer_id, device_token, platform, current_time), fetch=False)
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Device token registered successfully'
+                }), 200
+                
+            except Exception as table_error:
+                # If table creation fails, log but don't fail the request
+                print(f"Warning: Could not create/update device_tokens table: {table_error}")
+                print("Device token registration skipped. Push notifications may not work.")
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Device token received (storage may be unavailable)'
+                }), 200
+            
+        except Exception as e:
+            print(f"Error in register_device_token: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to register device token: {str(e)}'
+            }), 500
     
     @app.route('/api/profile/edit', methods=['PUT'])
     def edit_profile():
@@ -1202,299 +1250,15 @@ def create_app() -> Flask:
                 'message': f'Failed to update profile: {str(e)}'
             }), 500
     
-    # ========================================================================
-    # SECTION 6: PUSH NOTIFICATIONS API
-    # ========================================================================
-    # This section handles all push notification related functionality:
-    # - Fetching notifications for customers
-    # - Marking notifications as read
-    # - Registering device tokens for FCM push notifications
-    
-    # Get Notifications Endpoint
-    # Fetches all notifications for a given customer from Customer_Notifications table
-    
-    @app.route('/api/notifications', methods=['GET'])
-    def get_notifications():
-        """
-        Get all notifications for a customer.
-        
-        Query Parameters:
-            customerId (required): Customer ID to fetch notifications for
-        
-        Returns:
-            JSON response with list of notifications
-        """
-        try:
-            customer_id = request.args.get('customerId')
-            
-            if not customer_id:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Customer ID is required'
-                }), 400
-            
-            # Fetch notifications from database
-            # Note: This assumes a notifications table exists. If not, create it with:
-            # CREATE TABLE Customer_Notifications (
-            #     id INT AUTO_INCREMENT PRIMARY KEY,
-            #     customer_id VARCHAR(50) NOT NULL,
-            #     title VARCHAR(255) NOT NULL,
-            #     message TEXT NOT NULL,
-            #     type VARCHAR(50),
-            #     priority VARCHAR(20) DEFAULT 'medium',
-            #     is_read BOOLEAN DEFAULT FALSE,
-            #     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            #     FOREIGN KEY (customer_id) REFERENCES b2c_customer_master(customer_id)
-            # );
-            
-            notifications_query = """
-                SELECT id, customer_id, title, message, type, priority, is_read, created_at
-                FROM Customer_Notifications 
-                WHERE customer_id = %s 
-                ORDER BY created_at DESC 
-                LIMIT 50
-            """
-            
-            try:
-                notifications_result = db.execute_query(notifications_query, (customer_id,))
-            except Exception as db_error:
-                # If table doesn't exist, return empty array (will be created later)
-                error_msg = str(db_error).lower()
-                if 'table' in error_msg and 'doesn\'t exist' in error_msg:
-                    print(f"Notifications table doesn't exist yet. Returning empty array.")
-                    notifications_result = []
-                else:
-                    raise
-            
-            notifications = []
-            for notif in notifications_result:
-                # Calculate time ago
-                created_at = notif.get('created_at')
-                time_ago = 'Just now'
-                if created_at:
-                    if isinstance(created_at, str):
-                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-                    time_diff = datetime.now() - created_at
-                    
-                    if time_diff.total_seconds() < 60:
-                        time_ago = 'Just now'
-                    elif time_diff.total_seconds() < 3600:
-                        minutes = int(time_diff.total_seconds() / 60)
-                        time_ago = f'{minutes} minute{"s" if minutes != 1 else ""} ago'
-                    elif time_diff.days < 1:
-                        hours = int(time_diff.total_seconds() / 3600)
-                        time_ago = f'{hours} hour{"s" if hours != 1 else ""} ago'
-                    elif time_diff.days < 7:
-                        days = time_diff.days
-                        time_ago = f'{days} day{"s" if days != 1 else ""} ago'
-                    else:
-                        weeks = time_diff.days // 7
-                        time_ago = f'{weeks} week{"s" if weeks != 1 else ""} ago'
-                
-                # Map notification type to icon
-                type_icons = {
-                    'pickup': '♻️',
-                    'achievement': '🌱',
-                    'reward': '🎁',
-                    'update': '📢',
-                    'impact': '🌍',
-                    'payment': '💳',
-                    'system': '🔔',
-                }
-                icon = type_icons.get(notif.get('type', '').lower(), '🔔')
-                
-                notifications.append({
-                    'id': notif.get('id'),
-                    'title': notif.get('title', ''),
-                    'message': notif.get('message', ''),
-                    'time': time_ago,
-                    'type': notif.get('type', 'system'),
-                    'icon': icon,
-                    'isRead': bool(notif.get('is_read', False)),
-                    'priority': notif.get('priority', 'medium'),
-                })
-            
-            return jsonify({
-                'status': 'success',
-                'data': notifications,
-                'count': len(notifications),
-                'unreadCount': sum(1 for n in notifications if not n['isRead'])
-            }), 200
-            
-        except Exception as e:
-            print(f"Error in get_notifications: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f'Failed to fetch notifications: {str(e)}'
-            }), 500
-    
-    # Mark Notification as Read Endpoint
-    # Marks a specific notification or all notifications as read for a customer
-    
-    @app.route('/api/notifications/mark-read', methods=['POST'])
-    def mark_notification_read():
-        """
-        Mark notification(s) as read.
-        
-        Request Body:
-        {
-            "customerId": "1001",  // Required
-            "notificationId": 123,  // Optional: specific notification ID, if not provided, marks all as read
-        }
-        
-        Returns:
-            JSON response with success status
-        """
-        try:
-            data = request.get_json()
-            customer_id = data.get('customerId')
-            notification_id = data.get('notificationId')
-            
-            if not customer_id:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Customer ID is required'
-                }), 400
-            
-            if notification_id:
-                # Mark specific notification as read
-                update_query = """
-                    UPDATE Customer_Notifications 
-                    SET is_read = TRUE 
-                    WHERE id = %s AND customer_id = %s
-                """
-                db.execute_query(update_query, (notification_id, customer_id), fetch=False)
-                message = 'Notification marked as read'
-            else:
-                # Mark all notifications as read
-                update_query = """
-                    UPDATE Customer_Notifications 
-                    SET is_read = TRUE 
-                    WHERE customer_id = %s
-                """
-                db.execute_query(update_query, (customer_id,), fetch=False)
-                message = 'All notifications marked as read'
-            
-            return jsonify({
-                'status': 'success',
-                'message': message
-            }), 200
-            
-        except Exception as e:
-            print(f"Error in mark_notification_read: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f'Failed to update notification: {str(e)}'
-            }), 500
-    
-    # Register Device Token Endpoint
-    # Registers FCM device tokens for push notifications
-    # Stores tokens in b2c_device_tokens table for sending push notifications later
-    
-    @app.route('/api/notifications/register-device', methods=['POST'])
-    def register_device_token():
-        """
-        Register device token for push notifications.
-        
-        Request Body:
-        {
-            "customerId": "1001",  // Required
-            "deviceToken": "fcm_token_here",  // Required: FCM device token
-            "platform": "ios" or "android"  // Required
-        }
-        
-        Returns:
-            JSON response with success status
-        """
-        try:
-            data = request.get_json()
-            customer_id = data.get('customerId')
-            device_token = data.get('deviceToken')
-            platform = data.get('platform', 'android')
-            
-            if not customer_id:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Customer ID is required'
-                }), 400
-            
-            if not device_token:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Device token is required'
-                }), 400
-            
-            # Store device token in database
-            # Note: This assumes a device_tokens table exists. If not, create it with:
-            # CREATE TABLE b2c_device_tokens (
-            #     id INT AUTO_INCREMENT PRIMARY KEY,
-            #     customer_id VARCHAR(50) NOT NULL,
-            #     device_token TEXT NOT NULL,
-            #     platform VARCHAR(20) NOT NULL,
-            #     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            #     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            #     UNIQUE KEY unique_customer_device (customer_id, device_token(255)),
-            #     FOREIGN KEY (customer_id) REFERENCES b2c_customer_master(customer_id)
-            # );
-            
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Insert or update device token
-            upsert_query = """
-                INSERT INTO b2c_device_tokens (customer_id, device_token, platform, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE 
-                    device_token = VALUES(device_token),
-                    platform = VALUES(platform),
-                    updated_at = VALUES(updated_at)
-            """
-            
-            try:
-                db.execute_query(upsert_query, (customer_id, device_token, platform, current_time, current_time), fetch=False)
-            except Exception as db_error:
-                error_msg = str(db_error).lower()
-                if 'table' in error_msg and 'doesn\'t exist' in error_msg:
-                    print(f"Device tokens table doesn't exist yet. Please create it first.")
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Device tokens table not found. Please contact administrator.'
-                    }), 500
-                else:
-                    raise
-            
-            return jsonify({
-                'status': 'success',
-                'message': 'Device token registered successfully'
-            }), 200
-            
-        except Exception as e:
-            print(f"Error in register_device_token: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f'Failed to register device token: {str(e)}'
-            }), 500
-    
-    # ========================================================================
-    # SECTION 7: SESSION MANAGEMENT API
-    # ========================================================================
-    # This section handles user session management
-    # Note: Actual sessions are stored in AsyncStorage (frontend), not in database
-    # This endpoint is for logging purposes and API consistency
-    
-    # Logout Endpoint
-    # Logs user logout event (sessions are cleared in frontend AsyncStorage)
-    
     @app.route('/api/logout', methods=['POST'])
     def logout():
         """
-        Logout endpoint - clears user session.
-        Note: Sessions are stored locally in AsyncStorage, not in database.
-        This endpoint is for logging purposes and API consistency.
+        Logout endpoint.
+        Clears session data and invalidates any active sessions.
         
-        Request Body:
+        Expected JSON body:
         {
-            "customerId": "1001",  // Optional: Customer ID for logging
-            "sessionToken": "session_token_here"  // Optional: Session token for logging
+            "customerId": "1001"  // Optional: Customer ID
         }
         
         Returns:
@@ -1503,20 +1267,25 @@ def create_app() -> Flask:
         try:
             data = request.get_json() or {}
             customer_id = data.get('customerId')
-            session_token = data.get('sessionToken')
             
-            # Log logout for analytics (optional)
+            # If customer ID is provided, we can perform additional cleanup
+            # For example: clear device tokens, invalidate sessions, etc.
             if customer_id:
-                print(f"\n{'='*70}")
-                print(f"🚪 USER LOGOUT")
-                print(f"{'='*70}")
-                print(f"👤 Customer ID: {customer_id}")
-                print(f"🔑 Session Token: {session_token[:20] + '...' if session_token else 'N/A'}")
-                print(f"⏰ Logout Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"{'='*70}\n")
+                # Optional: Clear device tokens for this customer (if you want to disable push notifications on logout)
+                # This is optional - you might want to keep device tokens for future logins
+                # try:
+                #     db.execute_query(
+                #         "DELETE FROM device_tokens WHERE customer_id = %s",
+                #         (customer_id,),
+                #         fetch=False
+                #     )
+                # except:
+                #     pass  # Ignore if table doesn't exist or query fails
+                
+                print(f"User {customer_id} logged out")
             
-            # Note: Actual session clearing happens in frontend AsyncStorage
-            # This endpoint is for API consistency and logging purposes
+            # Clear any OTP data for this customer (if mobile number was provided)
+            # Note: OTPs expire automatically after 5 minutes, but we can clear them on logout
             
             return jsonify({
                 'status': 'success',
@@ -1525,31 +1294,11 @@ def create_app() -> Flask:
             
         except Exception as e:
             print(f"Error in logout: {str(e)}")
+            # Even if there's an error, return success to allow frontend to proceed with logout
             return jsonify({
-                'status': 'error',
-                'message': f'Failed to logout: {str(e)}'
-            }), 500
-    
-    # ========================================================================
-    # SECTION 8: ERROR HANDLERS
-    # ========================================================================
-    # Global error handlers for 404 and 500 errors
-    
-    @app.errorhandler(404)
-    def not_found(error):
-        """Handle 404 errors."""
-        return jsonify({
-            'status': 'error',
-            'message': 'Endpoint not found'
-        }), 404
-    
-    @app.errorhandler(500)
-    def internal_error(error):
-        """Handle 500 errors."""
-        return jsonify({
-            'status': 'error',
-            'message': 'Internal server error'
-        }), 500
+                'status': 'success',
+                'message': 'Logged out successfully'
+            }), 200
     
     return app
 

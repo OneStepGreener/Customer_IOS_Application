@@ -27,7 +27,7 @@ import {
 
 const { width, height } = Dimensions.get('window');
 
-const DashboardScreen = ({ onNavigateToProfile, onNavigateToNotifications, onNavigateToClock, onNavigateToFAQ, onNavigateToGift, onNavigateToCart }) => {
+const DashboardScreen = ({ onNavigateToProfile, onNavigateToNotifications, onNavigateToClock, onNavigateToFAQ, onNavigateToGift, onNavigateToCart, profileData }) => {
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
@@ -282,8 +282,10 @@ const DashboardScreen = ({ onNavigateToProfile, onNavigateToNotifications, onNav
               </View>
             </TouchableOpacity>
             <View style={styles.welcomeText}>
-              <Text style={styles.greeting}>Good Morning</Text>
-              <Text style={styles.name}>Hi, Welcome Back</Text>
+              <Text style={styles.greeting}>Welcome Back</Text>
+              <Text style={styles.name}>
+                {profileData?.customerName || profileData?.username || 'User'}
+              </Text>
             </View>
           </View>
           <TouchableOpacity style={styles.notificationButton} onPress={onNavigateToNotifications}>

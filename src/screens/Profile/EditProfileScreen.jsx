@@ -11,26 +11,26 @@ import {
   ScrollView,
   Animated,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import BottomNavigation from '../../components/BottomNavigation';
 import CustomStatusBar, { getStatusBarHeight } from '../../components/CustomStatusBar';
-import { fetchWithTimeout } from '../../utils/apiHelper';
-import SessionService from '../../services/SessionService';
 
 const { width, height } = Dimensions.get('window');
 
-// API Base URL
+// API Base URL Configuration:
+// For iOS Simulator: 'http://localhost:5000'
+// For Android Emulator: 'http://10.0.2.2:5000'
+// For Physical Device: 'http://YOUR_COMPUTER_IP:5000' (e.g., 'http://192.168.1.100:5000')
 const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:5000'
-  : 'https://your-production-url.com';
+  ? 'http://localhost:5000'  // ✅ For iOS Simulator - use localhost
+  : 'https://your-production-url.com';  // Production URL
 
 const EditProfileScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, onNavigateToCart, onNavigateToFAQ, onNavigateToClock, profileData, onUpdateProfile }) => {
   const [username, setUsername] = useState(profileData?.customerName || profileData?.username || 'John Smith');
   const [mobilePhone, setMobilePhone] = useState(profileData?.mobilePhone || '+44 555 5555 55');
   const [address, setAddress] = useState(profileData?.address || 'hno 2-250,');
   const [focusedInput, setFocusedInput] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   
   // Function to generate initials from username
   const generateInitials = (name) => {
@@ -76,81 +76,64 @@ const EditProfileScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, on
   }, []);
 
   const handleUpdateProfile = async () => {
-    if (!profileData?.customerId) {
+    if (isUpdating) {
+      return; // Prevent multiple submissions
+    }
+
+    const customerId = profileData?.customerId;
+    if (!customerId) {
       Alert.alert('Error', 'Customer ID not found. Please login again.');
       return;
     }
 
-    if (isSubmitting) {
-      return; // Prevent multiple submissions
-    }
-
-    setIsSubmitting(true);
+    setIsUpdating(true);
 
     try {
-      console.log('📤 Updating profile via API...');
-      
-      // Extract mobile number (remove +91 prefix if present)
-      let mobileNumber = mobilePhone.replace(/^\+91/, '').replace(/\s/g, '').trim();
-      
-      // Prepare update payload
-      const updatePayload = {
-        customerId: profileData.customerId,
-        fullName: username.trim(),
-      };
+      console.log('📤 EditProfileScreen: Sending profile update request...');
+      console.log('📤 API URL:', `${API_BASE_URL}/api/profile/edit`);
+      console.log('📤 Customer ID:', customerId);
+      console.log('📤 Update Data:', { fullName: username, address });
 
-      // Add mobile number if changed (but mobile number might not be editable)
-      // Only include if it's different from the original
-      if (mobileNumber && mobileNumber !== profileData.mobileNumber?.replace(/^\+91/, '').replace(/\s/g, '')) {
-        // Note: Mobile number updates might require OTP verification
-        // For now, we'll skip mobile number updates in profile edit
-        console.log('⚠️ Mobile number changes require OTP verification. Skipping mobile update.');
+      // Split address into houseNumber and address if it contains comma
+      let houseNumber = '';
+      let addressOnly = address;
+      if (address && address.includes(',')) {
+        const parts = address.split(',', 1);
+        houseNumber = parts[0].trim();
+        addressOnly = parts[1] ? parts[1].trim() : '';
       }
 
-      // Add address if provided
-      if (address && address.trim()) {
-        updatePayload.address = address.trim();
-      }
-
-      // Call update profile API
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/profile/edit`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(updatePayload),
+      const response = await fetch(`${API_BASE_URL}/api/profile/edit`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        60000 // 60 seconds timeout
-      );
+        body: JSON.stringify({
+          customerId: customerId,
+          fullName: username.trim(),
+          houseNumber: houseNumber,
+          address: addressOnly,
+        }),
+      });
+
+      console.log('📤 Response status:', response.status);
 
       const result = await response.json();
 
-      if (result.status === 'success' && response.ok) {
+      if (response.ok && result.status === 'success') {
         console.log('✅ Profile updated successfully:', result.data);
         
-        // Update session with new data
-        if (result.data) {
-          await SessionService.updateSession({
-            customerName: result.data.customerName || username,
-            email: result.data.email || profileData.email || '',
-            address: result.data.address || address,
-            city: result.data.city || profileData.city || '',
-            state: result.data.state || profileData.state || '',
-          });
-        }
-
-        // Create updated profile data for parent component
+        // Update local profile data with API response
         const updatedData = {
           ...profileData,
-          username: result.data.customerName || username,
-          customerName: result.data.customerName || username,
-          email: result.data.email || profileData.email || '',
-          mobilePhone: result.data.mobileNumber ? `+91${result.data.mobileNumber}` : mobilePhone,
-          address: result.data.address || address,
-          city: result.data.city || profileData.city || '',
-          state: result.data.state || profileData.state || '',
+          customerName: result.data.customerName,
+          username: result.data.customerName,
+          address: result.data.houseNumber && result.data.address 
+            ? `${result.data.houseNumber}, ${result.data.address}` 
+            : result.data.address || result.data.houseNumber || '',
+          email: result.data.email,
+          city: result.data.city,
+          state: result.data.state,
         };
 
         // Pass the updated data back to parent component
@@ -158,23 +141,33 @@ const EditProfileScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, on
           onUpdateProfile(updatedData);
         }
 
-        Alert.alert('Success', 'Profile updated successfully!');
+        Alert.alert(
+          'Success',
+          result.message || 'Profile updated successfully!',
+          [{ text: 'OK' }]
+        );
       } else {
-        throw new Error(result.message || 'Failed to update profile');
+        // Handle error
+        let errorMessage = result.message || 'Failed to update profile. Please try again.';
+        
+        // Handle specific error cases
+        if (errorMessage.toLowerCase().includes('under consideration')) {
+          errorMessage = 'Your profile is under consideration. Cannot edit profile at this time.';
+        } else if (errorMessage.toLowerCase().includes('already exists')) {
+          errorMessage = 'An account with this email already exists.';
+        }
+        
+        Alert.alert('Update Failed', errorMessage, [{ text: 'OK' }]);
       }
     } catch (error) {
-      console.error('❌ Error updating profile:', error);
-      
-      let errorMessage = 'Failed to update profile. Please try again.';
-      if (error.message) {
-        errorMessage = error.message;
-      } else if (error.name === 'AbortError') {
-        errorMessage = 'Request timeout. Please check your connection and try again.';
-      }
-
-      Alert.alert('Error', errorMessage);
+      console.error('Profile update error:', error);
+      Alert.alert(
+        'Network Error',
+        'Unable to connect to server. Please check your internet connection and try again.',
+        [{ text: 'OK' }]
+      );
     } finally {
-      setIsSubmitting(false);
+      setIsUpdating(false);
     }
   };
 
@@ -345,22 +338,14 @@ const EditProfileScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, on
             ]}
           >
             <TouchableOpacity 
-              style={[
-                styles.updateButton,
-                isSubmitting && styles.updateButtonDisabled
-              ]} 
+              style={[styles.updateButton, isUpdating && styles.updateButtonDisabled]} 
               onPress={handleUpdateProfile}
-              disabled={isSubmitting}
+              disabled={isUpdating}
             >
               <View style={styles.updateButtonGradient} />
-              {isSubmitting ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color="#ffffff" />
-                  <Text style={styles.updateButtonText}>Updating...</Text>
-                </View>
-              ) : (
-                <Text style={styles.updateButtonText}>Update Profile</Text>
-              )}
+              <Text style={styles.updateButtonText}>
+                {isUpdating ? 'Updating...' : 'Update Profile'}
+              </Text>
             </TouchableOpacity>
           </Animated.View>
         </View>
@@ -616,6 +601,10 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
+  updateButtonDisabled: {
+    backgroundColor: '#95a5a6',
+    opacity: 0.7,
+  },
   updateButtonGradient: {
     position: 'absolute',
     top: 0,
@@ -630,15 +619,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
     textAlign: 'center',
-  },
-  updateButtonDisabled: {
-    opacity: 0.7,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
   },
 
   bottomSpacer: {

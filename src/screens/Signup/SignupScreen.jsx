@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import CustomStatusBar, { getStatusBarHeight } from '../../components/CustomStatusBar';
-import { fetchWithTimeout } from '../../utils/apiHelper';
 
 
 const { width, height } = Dimensions.get('window');
@@ -27,11 +26,11 @@ const API_BASE_URL = __DEV__
   ? 'http://localhost:5000'  // ✅ For iOS Simulator - use localhost
   : 'https://your-production-url.com';  // Production URL
 
-const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber = '' }) => {
+const SignupScreen = ({ onBack, onSave, onNavigateToLogin }) => {
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
-    mobileNumber: prefillMobileNumber || '',
+    mobileNumber: '',
     houseNumber: '',
     address: '',
     city: '',
@@ -49,16 +48,6 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
   const [showKnowAboutUsDropdown, setShowKnowAboutUsDropdown] = useState(false);
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Update mobile number if prefillMobileNumber changes
-  React.useEffect(() => {
-    if (prefillMobileNumber) {
-      setFormData(prev => ({
-        ...prev,
-        mobileNumber: prefillMobileNumber
-      }));
-    }
-  }, [prefillMobileNumber]);
 
   const userTypeOptions = [
     'Household Apartment',
@@ -230,113 +219,19 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
       }
       
           const { latitude, longitude } = position.coords;
-      console.log('📍 Location obtained:', { 
-        latitude, 
-        longitude, 
-        accuracy: position.coords.accuracy,
-        altitude: position.coords.altitude,
-        heading: position.coords.heading,
-        speed: position.coords.speed
-      });
+      console.log('Location obtained:', { latitude, longitude, accuracy: position.coords.accuracy });
       
-      // Check if location looks like simulator default (Cupertino, CA or Mountain View, CA)
-      const isLikelySimulator = (
-        (latitude >= 37.3 && latitude <= 37.5 && longitude >= -122.1 && longitude <= -122.0) || // Cupertino, CA
-        (latitude >= 37.4 && latitude <= 37.5 && longitude >= -122.1 && longitude <= -122.0)  // Mountain View, CA
-      );
+      // Get exact address using Google API
+      console.log('Getting address from Google API...');
+          
+            const response = await fetch(
+              `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyABSofUQpLKthZ_xJAAEONGIPlwe2eKAh0`
+            );
+            
+            const data = await response.json();
+      console.log('Google API response:', data);
       
-      if (isLikelySimulator && __DEV__) {
-        console.warn('⚠️ SIMULATOR DETECTED: Location appears to be simulator default (California)');
-        console.warn('💡 TIP: Set custom location in simulator:');
-        console.warn('   iOS: Features → Location → Custom Location');
-        console.warn('   Android: Extended Controls (⋮) → Location');
-        console.warn('   Gurgaon coordinates: 28.4089, 77.0378');
-        console.warn('   Delhi coordinates: 28.6139, 77.2090');
-      }
-      
-      // Check if location is in India but might be showing wrong city
-      const isInIndia = (latitude >= 6.0 && latitude <= 37.0 && longitude >= 68.0 && longitude <= 97.0);
-      if (isInIndia && __DEV__) {
-        console.log('📍 Location is in India');
-        console.log(`📍 Coordinates: ${latitude}, ${longitude}`);
-        // Gurgaon approximate coordinates: 28.4089, 77.0378
-        const gurgaonLat = 28.4089;
-        const gurgaonLng = 77.0378;
-        const distance = Math.sqrt(
-          Math.pow(latitude - gurgaonLat, 2) + Math.pow(longitude - gurgaonLng, 2)
-        ) * 111; // Approximate km
-        
-        if (distance < 20) {
-          console.log(`📍 Location is approximately ${Math.round(distance)}km from Gurgaon center`);
-        }
-      }
-      
-      // Get exact address using Google API (Reverse Geocoding)
-      console.log('🌐 Getting address from Google Maps Geocoding API...');
-      console.log(`📍 Coordinates: ${latitude}, ${longitude}`);
-      
-      const GOOGLE_API_KEY = 'AIzaSyABSofUQpLKthZ_xJAAEONGIPlwe2eKAh0';
-      const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_API_KEY}`;
-      
-      try {
-        const response = await fetchWithTimeout(geocodeUrl, {}, 30000); // 30 seconds for Google Maps API
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('✅ Google API response status:', data.status);
-        console.log('📋 Google API response:', JSON.stringify(data, null, 2));
-        
-        // Check for API errors
-        if (data.status === 'REQUEST_DENIED') {
-          console.error('❌ Google API Error: REQUEST_DENIED');
-          console.error('Error message:', data.error_message);
-          Alert.alert(
-            'API Error',
-            'Google Maps API access denied. Please check API key configuration.',
-            [{ text: 'OK' }]
-          );
-          setIsLoadingLocation(false);
-          return;
-        }
-        
-        if (data.status === 'OVER_QUERY_LIMIT') {
-          console.error('❌ Google API Error: OVER_QUERY_LIMIT');
-          Alert.alert(
-            'API Quota Exceeded',
-            'Google Maps API quota exceeded. Please try again later.',
-            [{ text: 'OK' }]
-          );
-          setIsLoadingLocation(false);
-          return;
-        }
-        
-        if (data.status === 'INVALID_REQUEST') {
-          console.error('❌ Google API Error: INVALID_REQUEST');
-          console.error('Error message:', data.error_message);
-          Alert.alert(
-            'Invalid Request',
-            'Invalid coordinates provided to Google Maps API.',
-            [{ text: 'OK' }]
-          );
-          setIsLoadingLocation(false);
-          return;
-        }
-        
-        if (data.status === 'ZERO_RESULTS') {
-          console.warn('⚠️ Google API: ZERO_RESULTS - No address found for these coordinates');
-          Alert.alert(
-            'No Address Found',
-            'Could not find address for this location. Please enter address manually.',
-            [{ text: 'OK' }]
-          );
-          setIsLoadingLocation(false);
-          return;
-        }
-        
-        if (data.results && data.results.length > 0) {
+      if (data.results && data.results.length > 0) {
         const result = data.results[0];
         const formattedAddress = result.formatted_address;
         const addressComponents = result.address_components;
@@ -345,89 +240,50 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
         console.log('Address components:', addressComponents);
         
         // Extract address components
-        // Note: Google Maps might return "New Delhi" in formatted_address for Gurgaon locations
-        // but the address components will have more specific data (Gurgaon/Gurugram, Haryana)
-        let streetNumber = '';
-        let route = '';
+              let streetNumber = '';
+              let route = '';
         let sublocality = '';
         let locality = '';
         let administrativeAreaLevel1 = '';
         let postalCode = '';
-        let city = '';
-        let district = '';
-        
-        addressComponents.forEach(component => {
-          const types = component.types;
-          
-          if (types.includes('street_number')) {
-            streetNumber = component.long_name;
-          } else if (types.includes('route')) {
-            route = component.long_name;
-          } else if (types.includes('sublocality') || types.includes('sublocality_level_1')) {
+              
+              addressComponents.forEach(component => {
+                const types = component.types;
+                
+                if (types.includes('street_number')) {
+                  streetNumber = component.long_name;
+                } else if (types.includes('route')) {
+                  route = component.long_name;
+          } else if (types.includes('sublocality')) {
             sublocality = component.long_name;
           } else if (types.includes('locality')) {
             locality = component.long_name;
-            city = component.long_name; // Primary city name
-          } else if (types.includes('administrative_area_level_2')) {
-            district = component.long_name; // District (e.g., Gurgaon)
-            if (!city) city = component.long_name; // Use district as city if locality not found
-          } else if (types.includes('administrative_area_level_1')) {
-            administrativeAreaLevel1 = component.long_name; // State (e.g., Haryana)
+                } else if (types.includes('administrative_area_level_1')) {
+            administrativeAreaLevel1 = component.long_name;
           } else if (types.includes('postal_code')) {
             postalCode = component.long_name;
-          }
-        });
-        
-        // Prioritize Gurgaon/Gurugram over New Delhi if coordinates are in Gurgaon area
-        // Gurgaon coordinates range: approximately 28.3-28.6 lat, 77.0-77.2 lng
-        const isGurgaonArea = (latitude >= 28.3 && latitude <= 28.6 && longitude >= 77.0 && longitude <= 77.2);
-        if (isGurgaonArea && (district.toLowerCase().includes('gurgaon') || district.toLowerCase().includes('gurugram') || 
-            locality.toLowerCase().includes('gurgaon') || locality.toLowerCase().includes('gurugram'))) {
-          // Use Gurgaon/Gurugram as city instead of New Delhi
-          city = district || locality || 'Gurgaon';
-          console.log('📍 Detected Gurgaon location, using:', city);
-        }
+                }
+              });
               
-        // Update form with exact address and location coordinates
-        // Use parsed city (Gurgaon) instead of formatted address city (which might be New Delhi)
-        const finalCity = city || locality || district || sublocality || 'Auto-detected';
-        const finalState = administrativeAreaLevel1 || 'Auto-detected';
-        
-        console.log('📍 Parsed Address Components:');
-        console.log('   City:', finalCity);
-        console.log('   State:', finalState);
-        console.log('   District:', district);
-        console.log('   Locality:', locality);
-        console.log('   Sublocality:', sublocality);
-        console.log('   Formatted Address:', formattedAddress);
-        
-        setFormData(prev => ({
-          ...prev,
-          houseNumber: streetNumber || '',
-          address: formattedAddress, // Keep full formatted address
-          city: finalCity, // Use parsed city (Gurgaon) instead of formatted address city
-          state: finalState, // Use parsed state (Haryana)
-          latitude: latitude,
-          longitude: longitude
-        }));
+                // Update form with exact address and location coordinates
+               setFormData(prev => ({
+                 ...prev,
+                 houseNumber: streetNumber || '',
+            address: formattedAddress,
+            city: locality || sublocality || 'Auto-detected',
+            state: administrativeAreaLevel1 || 'Auto-detected',
+            latitude: latitude,
+            longitude: longitude
+               }));
         
         // Show success message
         const accuracy = position.coords.accuracy;
         const accuracyMessage = accuracy ? ` (Accuracy: ${Math.round(accuracy)}m)` : '';
         Alert.alert('Success', `Exact address filled automatically!${accuracyMessage}`);
         
-        } else {
-          console.warn('⚠️ Google API: No results found');
-          Alert.alert('Error', 'Could not retrieve address details. Please fill manually.');
-        }
-      } catch (apiError) {
-        console.error('❌ Google API request failed:', apiError);
-        Alert.alert(
-          'Network Error',
-          'Failed to fetch address from Google Maps API. Please check your internet connection and try again.',
-          [{ text: 'OK' }]
-        );
-      }
+            } else {
+              Alert.alert('Error', 'Could not retrieve address details. Please fill manually.');
+            }
       
       setIsLoadingLocation(false);
       
@@ -547,14 +403,12 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
       console.log('📤 API URL:', `${API_BASE_URL}/api/signup`);
       console.log('📤 Form Data:', formData);
 
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/signup`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
+      const response = await fetch(`${API_BASE_URL}/api/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           fullName: formData.fullName.trim(),
           email: formData.email.trim(),
           mobileNumber: formData.mobileNumber.trim(),
@@ -569,9 +423,7 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
           latitude: formData.latitude,
           longitude: formData.longitude,
         }),
-        },
-        60000 // 60 seconds timeout
-      );
+      });
 
       console.log('📤 Response status:', response.status);
 
@@ -665,42 +517,20 @@ const SignupScreen = ({ onBack, onSave, onNavigateToLogin, prefillMobileNumber =
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Mobile Number</Text>
-            <View style={[
-              styles.phoneInputContainer,
-              prefillMobileNumber && styles.phoneInputContainerDisabled
-            ]}>
-              <View style={[
-                styles.countryCodeContainer,
-                prefillMobileNumber && styles.countryCodeContainerDisabled
-              ]}>
+            <View style={styles.phoneInputContainer}>
+              <View style={styles.countryCodeContainer}>
                 <Text style={styles.countryCode}>+91</Text>
               </View>
               <TextInput
-                style={[
-                  styles.phoneInput,
-                  errors.mobileNumber && styles.inputError,
-                  prefillMobileNumber && styles.phoneInputDisabled
-                ]}
+                style={[styles.phoneInput, errors.mobileNumber && styles.inputError]}
                 value={formData.mobileNumber}
-                onChangeText={(value) => {
-                  // Prevent editing if mobile number is pre-filled from OTP
-                  if (!prefillMobileNumber) {
-                    handleInputChange('mobileNumber', value);
-                  }
-                }}
+                onChangeText={(value) => handleInputChange('mobileNumber', value)}
                 placeholder="Enter 10-digit mobile number"
                 keyboardType="phone-pad"
                 maxLength={10}
                 placeholderTextColor="#999999"
-                editable={!prefillMobileNumber}
-                selectTextOnFocus={false}
               />
             </View>
-            {prefillMobileNumber && (
-              <Text style={styles.disabledHintText}>
-                Mobile number verified via OTP - cannot be changed
-              </Text>
-            )}
             {errors.mobileNumber && <Text style={styles.errorText}>{errors.mobileNumber}</Text>}
           </View>
         </View>
@@ -983,20 +813,12 @@ const styles = StyleSheet.create({
     elevation: 1,
     minHeight: Math.max(height * 0.055, 45),
   },
-  phoneInputContainerDisabled: {
-    backgroundColor: '#F5F5F5',
-    borderColor: '#D0D0D0',
-    opacity: 0.8,
-  },
   countryCodeContainer: {
     backgroundColor: '#F1F8E9',
     paddingHorizontal: Math.max(width * 0.03, 12),
     paddingVertical: Math.max(height * 0.015, 12),
     borderRightWidth: 1,
     borderRightColor: '#E8E8E8',
-  },
-  countryCodeContainerDisabled: {
-    backgroundColor: '#E8E8E8',
   },
   countryCode: {
     fontSize: Math.max(Math.min(width * 0.035, 14), 12),
@@ -1012,18 +834,6 @@ const styles = StyleSheet.create({
     fontSize: Math.max(Math.min(width * 0.035, 14), 12),
     backgroundColor: 'transparent',
     color: '#2E7D32',
-  },
-  phoneInputDisabled: {
-    backgroundColor: 'transparent',
-    color: '#666666',
-    opacity: 0.7,
-  },
-  disabledHintText: {
-    fontSize: Math.max(Math.min(width * 0.03, 12), 11),
-    color: '#666666',
-    fontStyle: 'italic',
-    marginTop: Math.max(height * 0.005, 4),
-    marginLeft: Math.max(width * 0.01, 4),
   },
   weightInputContainer: {
     flexDirection: 'row',

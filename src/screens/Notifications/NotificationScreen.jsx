@@ -10,9 +10,9 @@ import {
   Animated,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import BottomNavigation from '../../components/BottomNavigation';
-import { fetchWithTimeout } from '../../utils/apiHelper';
 
 const { width, height } = Dimensions.get('window');
 
@@ -24,7 +24,7 @@ const API_BASE_URL = __DEV__
   ? 'http://localhost:5000'  // ✅ For iOS Simulator - use localhost
   : 'https://your-production-url.com';  // Production URL
 
-const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, onNavigateToCart, onNavigateToFaq, onNavigateToClock, customerId }) => {
+const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, onNavigateToCart, onNavigateToFaq, onNavigateToClock, profileData }) => {
   // Navigation handlers
   const handleDashboardPress = () => {
     if (onNavigateToDashboard) {
@@ -61,7 +61,7 @@ const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, o
   };
   const [notifications, setNotifications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -72,45 +72,43 @@ const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, o
   const rotateAnim3 = useRef(new Animated.Value(0)).current;
 
   // Fetch notifications from API
-  const fetchNotifications = React.useCallback(async () => {
+  const fetchNotifications = async () => {
+    const customerId = profileData?.customerId;
+    
     if (!customerId) {
-      console.warn('No customerId provided, cannot fetch notifications');
+      console.warn('No customerId available, cannot fetch notifications');
       setIsLoading(false);
       return;
     }
 
     try {
       console.log('📬 Fetching notifications for customer:', customerId);
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/notifications?customerId=${customerId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+      const response = await fetch(`${API_BASE_URL}/api/notifications?customerId=${customerId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        60000 // 60 seconds timeout
-      );
+      });
 
       const result = await response.json();
 
       if (response.ok && result.status === 'success') {
-        console.log('📬 Notifications fetched:', result.data);
-        setNotifications(result.data || []);
+        console.log('✅ Notifications fetched:', result.data.notifications.length);
+        setNotifications(result.data.notifications || []);
+        setUnreadCount(result.data.unreadCount || 0);
       } else {
-        console.error('Failed to fetch notifications:', result.message);
-        // Keep empty array on error
+        console.error('❌ Failed to fetch notifications:', result.message);
+        // Keep empty notifications on error
         setNotifications([]);
       }
     } catch (error) {
-      console.error('Error fetching notifications:', error);
-      // Keep empty array on error
+      console.error('❌ Error fetching notifications:', error);
+      // Keep empty notifications on error
       setNotifications([]);
     } finally {
       setIsLoading(false);
-      setRefreshing(false);
     }
-  }, [customerId]);
+  };
 
   useEffect(() => {
     // Start animations when component mounts
@@ -155,7 +153,7 @@ const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, o
 
     // Fetch notifications from API
     fetchNotifications();
-  }, [fetchNotifications]);
+  }, [profileData?.customerId]);
 
   const spin1 = rotateAnim1.interpolate({
     inputRange: [0, 1],
@@ -173,74 +171,49 @@ const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, o
   });
 
   const handleNotificationPress = async (notificationId) => {
-    // Mark notification as read when pressed
+    // Mark notification as read when pressed (local state only since notifications are dynamic)
     const updatedNotifications = notifications.map(notification => 
       notification.id === notificationId 
         ? { ...notification, isRead: true }
         : notification
     );
     setNotifications(updatedNotifications);
-
-    // Mark as read in backend
-    if (customerId && notificationId) {
+    
+    // Update unread count
+    const newUnreadCount = updatedNotifications.filter(n => !n.isRead).length;
+    setUnreadCount(newUnreadCount);
+    
+    // Optionally call API to mark as read (for future use)
+    const customerId = profileData?.customerId;
+    if (customerId) {
       try {
-        await fetchWithTimeout(
-          `${API_BASE_URL}/api/notifications/mark-read`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              customerId: customerId,
-              notificationId: notificationId,
-            }),
+        await fetch(`${API_BASE_URL}/api/notifications/mark-read`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
           },
-          60000 // 60 seconds timeout
-        );
+          body: JSON.stringify({
+            customerId: customerId,
+            notificationId: notificationId,
+          }),
+        });
       } catch (error) {
         console.error('Error marking notification as read:', error);
       }
     }
   };
 
-  const markAllAsRead = async () => {
+  const markAllAsRead = () => {
     const updatedNotifications = notifications.map(notification => ({
       ...notification,
       isRead: true
     }));
     setNotifications(updatedNotifications);
-
-    // Mark all as read in backend
-    if (customerId) {
-      try {
-        await fetchWithTimeout(
-          `${API_BASE_URL}/api/notifications/mark-read`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              customerId: customerId,
-            }),
-          },
-          60000 // 60 seconds timeout
-        );
-      } catch (error) {
-        console.error('Error marking all notifications as read:', error);
-      }
-    }
+    setUnreadCount(0);
   };
 
   const clearAllNotifications = () => {
-    // Clear from local state only (backend keeps them for history)
     setNotifications([]);
-  };
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchNotifications();
   };
 
   const getPriorityColor = (priority) => {
@@ -322,8 +295,14 @@ const NotificationScreen = ({ onBack, onNavigateToDashboard, onNavigateToGift, o
               <Text style={styles.emptyStateSubtitle}>
                 No new notifications. You're all caught up with your eco-journey.
               </Text>
-              <TouchableOpacity style={styles.refreshButton} onPress={handleRefresh} disabled={refreshing}>
-                <Text style={styles.refreshText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+              <TouchableOpacity 
+                style={styles.refreshButton}
+                onPress={() => {
+                  setIsLoading(true);
+                  fetchNotifications();
+                }}
+              >
+                <Text style={styles.refreshText}>Refresh</Text>
               </TouchableOpacity>
             </View>
           ) : (
