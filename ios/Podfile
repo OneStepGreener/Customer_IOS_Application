@@ -20,7 +20,9 @@ target 'B2B_CustomerApp' do
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.
-    :app_path => "#{Pod::Config.instance.installation_root}/.."
+    :app_path => "#{Pod::Config.instance.installation_root}/..",
+    # Use JSC instead of Hermes to avoid cmake dependency
+    :hermes_enabled => false
   )
 
   post_install do |installer|
